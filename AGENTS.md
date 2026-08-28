@@ -3,10 +3,13 @@
 ## Overview
 A native Quickshell / Omarchy-shell plugin providing a mouse-activated rising popup window switcher and launcher.
 
-- **Plugin ID**: `taisau.bottom-launcher`
-- **Location**: `~/.config/omarchy/plugins/taisau.bottom-launcher/` (symlinked from `~/sync/5 computadors/53 devices/53.01 framework/bottom-launcher`)
+- **Plugin ID**: `io.github.taisau.bottom-launcher`
+- **Location**: `~/.config/omarchy/plugins/io.github.taisau.bottom-launcher/` (symlinked from `~/sync/5 computadors/53 devices/53.01 framework/bottom-launcher`)
+- **GitHub**: `https://github.com/taisau/omarchy-bottom-launcher` (public)
+- **Marketplace Submission**: Issue [#3214](https://github.com/HANCORE-linux/omarchy-plugin-marketplace/issues/3214) on `HANCORE-linux/omarchy-plugin-marketplace`
 - **Plugin Type**: `service` (`keepLoaded: true`)
 - **Target Platform**: Framework Laptop 13 running Fedora 44 + Hyprland + Omarchy Quattro
+
 
 ## Architecture & Implementation Details
 
