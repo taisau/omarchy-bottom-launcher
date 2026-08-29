@@ -47,7 +47,7 @@ A native Quickshell / Omarchy-shell plugin providing a mouse-activated rising po
   - Replaced `vbrosseau.alttab`: wired `Alt+Tab` / `Alt+Shift+Tab` keyboard navigation and modifier-release window switching into `bottom-launcher`. Uninstalled `vbrosseau.alttab`.
 - **2026-08-29**:
   - Added per-agent icon split: `org.omarchy.agent` (OpenCode) keeps the 8 blue robot variants; `org.omarchy.agent.hermes` (Hermes Agent via saltbox) gets `assets/omarchy-agent-hermes.png` — the Buuf "Dope Red Robot" (`8 media/84 image collections/84.01 icons/Buuf Deuce/Swag/The Basement/Lamer/Dope Red Robot.ico`, frame 3 = 64px, converted 8-bit with `magick "[ico]"[3] -strip -depth 8`). Resolution is an early-return branch in `iconPathFor()` before the desktop-entry cascade.
-  - Verified live: launched a test hermes window (`initialClass=org.omarchy.agent.hermes`), screenshot confirmed the red robot tile in the switcher while opencode windows kept blue robots. Test window and temp scripts cleaned up. Changes not yet committed to the GitHub repo.
+  - Verified live: launched a test hermes window (`initialClass=org.omarchy.agent.hermes`), screenshot confirmed the red robot tile in the switcher while opencode windows kept blue robots. Test window and temp scripts cleaned up. Released as v1.1.0 (commit `dbf4c97`).
 
 
 
