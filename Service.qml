@@ -33,11 +33,19 @@ Item {
         return Qt.resolvedUrl("assets/omarchy-agent-" + (h % agentVariantCount) + ".png");
     }
 
+    // Hermes agent (Nous Research) uses a dedicated red Buuf robot
+    function hermesIconUrlFor() {
+        return Qt.resolvedUrl("assets/omarchy-agent-hermes.png");
+    }
+
     // Comprehensive icon lookup cascade with memoization
     function iconPathFor(cls, title, addr) {
         if (!cls) return Quickshell.iconPath("application-x-executable");
         if (cls.toLowerCase() === "org.omarchy.agent") {
             return agentIconUrlFor(addr);
+        }
+        if (cls.toLowerCase() === "org.omarchy.agent.hermes") {
+            return hermesIconUrlFor();
         }
 
         const cacheKey = cls + "::" + (title || "");

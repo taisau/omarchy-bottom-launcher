@@ -30,6 +30,7 @@ A native Quickshell / Omarchy-shell plugin providing a mouse-activated rising po
   - Groups clients by workspace using `logic.js`.
   - Desktop entry, WMClass, and PWA name resolution via `Quickshell.iconPath` and `DesktopEntries`.
   - Supports custom multi-color Buuf robot variants for `org.omarchy.agent` (`assets/omarchy-agent-{0..7}.png`).
+  - Hermes agent windows (`org.omarchy.agent.hermes`) resolve to a dedicated red Buuf robot (`assets/omarchy-agent-hermes.png`, from the "Dope Red Robot" Buuf icon), checked before the generic cascade in `iconPathFor()`.
 - **Smooth Animation & Dismissal**:
   - Rises up from the bottom edge using `NumberAnimation` on `anchors.bottomMargin` with `Easing.OutCubic`.
   - Auto-hides via a 400ms debounced timer when cursor leaves the card area during mouse mode.
@@ -44,6 +45,9 @@ A native Quickshell / Omarchy-shell plugin providing a mouse-activated rising po
   - Updated window readout to display only the window title (without application class prefix).
   - Added title sanitizer (`cleanTitle`) in `logic.js` to strip OpenCode terminal prefixes (`OC | `) and browser/app suffixes.
   - Replaced `vbrosseau.alttab`: wired `Alt+Tab` / `Alt+Shift+Tab` keyboard navigation and modifier-release window switching into `bottom-launcher`. Uninstalled `vbrosseau.alttab`.
+- **2026-08-29**:
+  - Added per-agent icon split: `org.omarchy.agent` (OpenCode) keeps the 8 blue robot variants; `org.omarchy.agent.hermes` (Hermes Agent via saltbox) gets `assets/omarchy-agent-hermes.png` — the Buuf "Dope Red Robot" (`8 media/84 image collections/84.01 icons/Buuf Deuce/Swag/The Basement/Lamer/Dope Red Robot.ico`, frame 3 = 64px, converted 8-bit with `magick "[ico]"[3] -strip -depth 8`). Resolution is an early-return branch in `iconPathFor()` before the desktop-entry cascade.
+  - Verified live: launched a test hermes window (`initialClass=org.omarchy.agent.hermes`), screenshot confirmed the red robot tile in the switcher while opencode windows kept blue robots. Test window and temp scripts cleaned up. Changes not yet committed to the GitHub repo.
 
 
 
