@@ -132,6 +132,31 @@ Item {
         Hyprland.dispatch('hl.dsp.focus({ window = "address:' + addr + '" })');
     }
 
+    // IPC handler for external control and screenshot capture
+    IpcHandler {
+        target: "bottom-launcher"
+        function open(): string {
+            root.openedViaKeyboard = false;
+            root.requestOpen();
+            return "ok";
+        }
+        function close(): string {
+            root.open = false;
+            return "ok";
+        }
+        function toggle(): string {
+            if (root.open) root.open = false;
+            else {
+                root.openedViaKeyboard = false;
+                root.requestOpen();
+            }
+            return "ok";
+        }
+        function ping(): string {
+            return "ok";
+        }
+    }
+
     // Global Shortcuts for Alt+Tab / Alt+Shift+Tab
     GlobalShortcut {
         appid: "omarchy-bottom-launcher"
