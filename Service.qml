@@ -230,12 +230,15 @@ Item {
     // Both external producers (modifier probe and client list) are launched
     // under /usr/bin/setsid, so each tracked child becomes the leader of an
     // isolated process group (PGID == processId). Every binary is referenced
-    // by fixed absolute path (no PATH lookup) and there is no shell pipeline:
-    // each producer is a two-layer tree (timeout -> hyprctl) whose coreutils
-    // timeout enforces the OS-level deadline with TERM -> KILL escalation
-    // (-k). The shared supervisor below reaps the FULL process group
-    // (TERM, short grace, then KILL) on deadline, output overflow,
-    // supersession, and component destruction.
+    // by fixed absolute path (no PATH lookup), and each producer runs a
+    // pipeline entirely inside the supervised group: coreutils timeout
+    // enforces the OS-level deadline with TERM -> KILL escalation (-k), and
+    // /usr/bin/head -c enforces the byte cap BEFORE any byte reaches QML,
+    // so the parser can never buffer more than the allowance. The limiter
+    // allowance is cap + 1: a payload that still exceeds the cap on arrival
+    // is EOF-at-limit (truncated) and fails closed. The shared supervisor
+    // below reaps the FULL process group (TERM, short grace, then KILL) on
+    // deadline, supersession, and component destruction.
     // ------------------------------------------------------------------
     readonly property string exeSh: "/bin/sh"
     readonly property string exeSetsid: "/usr/bin/setsid"
@@ -243,6 +246,10 @@ Item {
     readonly property string exeHyprctl: "/usr/bin/hyprctl"
     readonly property int clientsDeadlineSec: 5
     readonly property int modCheckDeadlineSec: 2
+
+    // Modifier probe expression (contains only double quotes, so it is
+    // safe to single-quote inside the sh -c scripts below)
+    readonly property string modProbeExpr: 'error(tostring(hl.is_key_down("Alt_L") or hl.is_key_down("Alt_R") or hl.is_key_down("Super_L") or hl.is_key_down("Super_R")))'
 
     // Process-group leader id of a running producer (0 when not running)
     function groupLeaderId(proc) {
@@ -291,39 +298,41 @@ Item {
         }
     }
 
-    // Modifier probe: setsid'd fixed tree (timeout -> hyprctl), absolutely
-    // referenced, output-bounded sink, group-reaped on overflow, deadline,
-    // and destruction. No unbounded StdioCollector.
+    // Modifier probe: setsid'd supervised pipeline (timeout -> sh ->
+    // hyprctl | head -c). The byte limiter runs inside the same process
+    // group before QML receives any data; allowance is cap + 1 so any
+    // truncation is detected and fails closed.
     Process {
         id: modCheck
         command: [
             root.exeSetsid, root.exeTimeout, "-k", "1", String(root.modCheckDeadlineSec),
-            root.exeHyprctl, "eval",
-            'error(tostring(hl.is_key_down("Alt_L") or hl.is_key_down("Alt_R") or hl.is_key_down("Super_L") or hl.is_key_down("Super_R")))'
+            root.exeSh, "-c",
+            "/usr/bin/hyprctl eval '" + root.modProbeExpr + "' 2>/dev/null | /usr/bin/head -c " + (root.modMaxBytes + 1)
         ]
         stdout: SplitParser {
             onRead: function(line) {
-                if (root._modBuffer.length < root.modMaxBytes) {
-                    const remaining = root.modMaxBytes - root._modBuffer.length;
-                    root._modBuffer += (String(line || "") + "\n").slice(0, remaining);
-                } else if (modCheck.running) {
-                    root._modOverflow = true;
-                    root.reapProcessGroup(modCheck); // output ceiling
+                const s = String(line || "");
+                const allowance = root.modMaxBytes + 1;
+                if (root._modBuffer.length + s.length > allowance) {
+                    root._modTruncated = true;
+                    root._modBuffer += s.slice(0, Math.max(0, allowance - root._modBuffer.length));
+                } else {
+                    root._modBuffer += s;
                 }
             }
         }
         onStarted: {
             root._modBuffer = "";
-            root._modOverflow = false;
+            root._modTruncated = false;
             modCheckDeadline.restart();
         }
         onExited: {
             modCheckDeadline.stop();
             const out = root._modBuffer;
-            const overflowed = root._modOverflow;
+            const truncated = root._modTruncated || out.length > root.modMaxBytes;
             root._modBuffer = "";
-            root._modOverflow = false;
-            if (overflowed) return;
+            root._modTruncated = false;
+            if (truncated) return; // fail closed: never act on partial data
             if (!root.open || !root.openedViaKeyboard) return;
             if (!out.trim().endsWith("true")) {
                 if (root.flat.length > 0 && root.selected < root.flat.length) {
@@ -359,14 +368,16 @@ Item {
         }
     }
 
-    // Security and DoS ceilings for compositor- and client-derived data
-    readonly property int maxClientsBytes: 1048576 // 1 MiB hard stream buffer ceiling
-    readonly property int modMaxBytes: 64 // modifier probe emits "true"/"false"
+    // Security and DoS ceilings for compositor- and client-derived data.
+    // The in-group limiters allow cap + 1 bytes; receipt above the cap
+    // marks the payload as truncated and it is never parsed.
+    readonly property int maxClientsBytes: 1048576 // 1 MiB response cap
+    readonly property int modMaxBytes: 512 // hyprctl eval error() wraps the true/false verdict in a verbose "error: [string ...]:N:" message; cap sits well above that fixed-format wrapper
     property string _clientsBuffer: ""
-    property bool _clientsOverflow: false
+    property bool _clientsTruncated: false
     property bool _clientsPending: false
     property string _modBuffer: ""
-    property bool _modOverflow: false
+    property bool _modTruncated: false
     property var _reapQueue: []
 
     // Parse a bounded clients payload and open the switcher
@@ -394,37 +405,42 @@ Item {
         root.open = true;
     }
 
-    // Bounded client list: setsid'd fixed tree (timeout -> hyprctl), no
-    // shell pipeline, byte-capped QML sink, group-reaped on overflow,
-    // deadline, supersession, and destruction.
+    // Bounded client list: setsid'd supervised pipeline (timeout -> sh ->
+    // hyprctl | head -c). The limiter caps the stream at maxClientsBytes + 1
+    // inside the supervised group before QML receives it; a payload above
+    // the cap is EOF-at-limit (truncated) and fails closed. Concatenated
+    // SplitParser lines reconstruct the JSON (newlines are JSON whitespace
+    // only ever appear outside strings in hyprctl output).
     Process {
         id: clientsProc
         command: [
             root.exeSetsid, root.exeTimeout, "-k", "1", String(root.clientsDeadlineSec),
-            root.exeHyprctl, "-j", "clients"
+            root.exeSh, "-c",
+            "/usr/bin/hyprctl -j clients 2>/dev/null | /usr/bin/head -c " + (root.maxClientsBytes + 1)
         ]
         stdout: SplitParser {
             onRead: function(line) {
-                if (root._clientsBuffer.length < root.maxClientsBytes) {
-                    const remaining = root.maxClientsBytes - root._clientsBuffer.length;
-                    root._clientsBuffer += (String(line || "") + "\n").slice(0, remaining);
-                } else if (clientsProc.running) {
-                    root._clientsOverflow = true;
-                    root.reapProcessGroup(clientsProc); // output ceiling
+                const s = String(line || "");
+                const allowance = root.maxClientsBytes + 1;
+                if (root._clientsBuffer.length + s.length > allowance) {
+                    root._clientsTruncated = true;
+                    root._clientsBuffer += s.slice(0, Math.max(0, allowance - root._clientsBuffer.length));
+                } else {
+                    root._clientsBuffer += s;
                 }
             }
         }
         onStarted: {
             root._clientsBuffer = "";
-            root._clientsOverflow = false;
+            root._clientsTruncated = false;
         }
         onExited: {
             clientsDeadline.stop();
             const out = root._clientsBuffer;
-            const overflowed = root._clientsOverflow;
+            const truncated = root._clientsTruncated || out.length > root.maxClientsBytes;
             root._clientsBuffer = "";
-            root._clientsOverflow = false;
-            if (!overflowed) root.collectClients(out);
+            root._clientsTruncated = false;
+            if (!truncated && out.length > 0) root.collectClients(out);
             if (root._clientsPending) {
                 root._clientsPending = false;
                 clientsDeadline.restart();
