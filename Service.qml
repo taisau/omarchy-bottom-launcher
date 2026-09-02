@@ -33,19 +33,27 @@ Item {
         return Qt.resolvedUrl("assets/omarchy-agent-" + (h % agentVariantCount) + ".png");
     }
 
-    // Hermes agent (Nous Research) uses a dedicated red Buuf robot
-    function hermesIconUrlFor() {
-        return Qt.resolvedUrl("assets/omarchy-agent-hermes.png");
+    // Hermes agent (Nous Research) multi-colour variants based on window address
+    function hermesIconUrlFor(addr) {
+        let h = 0;
+        const s = String(addr || "");
+        for (let i = 0; i < s.length; i++) h = ((h * 31 + s.charCodeAt(i)) >>> 0);
+        return Qt.resolvedUrl("assets/omarchy-agent-hermes-" + (h % agentVariantCount) + ".png");
     }
 
     // Comprehensive icon lookup cascade with memoization
     function iconPathFor(cls, title, addr) {
         if (!cls) return Quickshell.iconPath("application-x-executable");
+        if (cls.toLowerCase() === "org.omarchy.agent.hermes") {
+            return hermesIconUrlFor(addr);
+        }
         if (cls.toLowerCase() === "org.omarchy.agent") {
             return agentIconUrlFor(addr);
         }
-        if (cls.toLowerCase() === "org.omarchy.agent.hermes") {
-            return hermesIconUrlFor();
+
+        const titleLower = (title || "").toLowerCase();
+        if (titleLower.includes("hermes")) {
+            return hermesIconUrlFor(addr);
         }
 
         const cacheKey = cls + "::" + (title || "");

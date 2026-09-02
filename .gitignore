@@ -1,3 +1,6 @@
 *.bak
 *~
 .DS_Store
+
+# AI agent memory — kept local, excluded from the distributable plugin
+AGENTS.md
