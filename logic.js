@@ -1,10 +1,23 @@
 // Pure logic for window grouping and layout
 .pragma library
 
+// Practical ceilings for compositor- and client-derived data. Titles,
+// classes, and workspace names are application-controlled, so every sink
+// is bounded before it reaches models or rendering.
+const MAX_CLIENTS = 200; // window entries parsed per collection
+const MAX_NAME = 100;    // workspace names and application classes
+const MAX_TITLE = 200;   // window titles
+const MAX_ADDR = 32;     // window addresses
+
+function capStr(v, max) {
+    const s = String(v == null ? "" : v);
+    return s.length > max ? s.slice(0, max) : s;
+}
+
 // Cleans up raw window titles by stripping CLI / shell prefixes and app suffixes
 function cleanTitle(title, cls) {
-    let t = String(title || "").trim();
-    if (!t || t === "-") return cls || "";
+    let t = capStr(String(title || "").trim(), MAX_TITLE);
+    if (!t || t === "-") return capStr(cls || "", MAX_NAME);
 
     // Strip OpenCode terminal prefix "OC | "
     t = t.replace(/^OC\s*\|\s*/i, "");
@@ -15,7 +28,7 @@ function cleanTitle(title, cls) {
     // Strip trailing app suffixes like " - sync - Obsidian 1.13.7"
     t = t.replace(/\s*-\s*Obsidian(\s+[\d\.]+)?$/i, "");
 
-    return t.trim() || cls || "";
+    return t.trim() || capStr(cls || "", MAX_NAME);
 }
 
 // Group clients by workspace: active workspace first then ascending id;
@@ -25,6 +38,7 @@ function cleanTitle(title, cls) {
 // Returns [{ name, entries: [{ cls, title, addr, hidden, fhid, flatIdx, groupIdx }] }].
 function groupClients(clients, activeWsId) {
     if (!Array.isArray(clients)) return [];
+    if (clients.length > MAX_CLIENTS) clients = clients.slice(0, MAX_CLIENTS);
 
     const wsOrder = [];
     const wsMap = {};
@@ -32,7 +46,7 @@ function groupClients(clients, activeWsId) {
     for (const c of clients) {
         if (!c || c.pinned) continue;
         const wsId = (c.workspace && c.workspace.id !== undefined) ? c.workspace.id : 0;
-        const wsName = (c.workspace && c.workspace.name) ? c.workspace.name : String(wsId);
+        const wsName = capStr((c.workspace && c.workspace.name) ? c.workspace.name : String(wsId), MAX_NAME);
         if (!(wsId in wsMap)) {
             wsOrder.push(wsId);
             wsMap[wsId] = { name: wsName, clients: [] };
@@ -58,10 +72,10 @@ function groupClients(clients, activeWsId) {
         groups.push({
             name: ws.name,
             entries: ws.clients.map(c => ({
-                cls: c.class || "",
-                title: cleanTitle(c.title, c.class),
-                rawTitle: c.title || "-",
-                addr: c.address || "",
+                cls: capStr(c.class || "", MAX_NAME),
+                title: capStr(cleanTitle(c.title, c.class), MAX_TITLE),
+                rawTitle: capStr(c.title || "-", MAX_TITLE),
+                addr: capStr(String(c.address || ""), MAX_ADDR).replace(/[^0-9a-zA-Z]/g, ""),
                 hidden: !!c.hidden,
                 fhid: c.focusHistoryID || 0,
                 flatIdx: flatIdx++,

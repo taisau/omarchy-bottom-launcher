@@ -20,8 +20,11 @@ Item {
     property var flat: []
     property int selected: 0
 
-    // In-memory icon path cache for instant O(1) lookups
+    // In-memory icon path cache for instant O(1) lookups.
+    // Bounded: a stream of uniquely titled windows must not grow shared-shell
+    // memory indefinitely (FIFO eviction, see cacheIcon).
     property var iconCache: ({})
+    readonly property int iconCacheLimit: 128
 
     // Multi-colour variants for org.omarchy.agent (Buuf robot)
     readonly property int agentVariantCount: 8
@@ -39,6 +42,17 @@ Item {
         const s = String(addr || "");
         for (let i = 0; i < s.length; i++) h = ((h * 31 + s.charCodeAt(i)) >>> 0);
         return Qt.resolvedUrl("assets/omarchy-agent-hermes-" + (h % agentVariantCount) + ".png");
+    }
+
+    // Bounded cache write with FIFO eviction (keys are class::title pairs;
+    // insertion-ordered, so Object.keys() yields oldest-first eviction order)
+    function cacheIcon(key, url) {
+        const keys = Object.keys(root.iconCache);
+        if (keys.length >= root.iconCacheLimit) {
+            const evict = Math.max(1, Math.floor(root.iconCacheLimit / 4));
+            for (let i = 0; i < evict; i++) delete root.iconCache[keys[i]];
+        }
+        root.iconCache[key] = url;
     }
 
     // Comprehensive icon lookup cascade with memoization
@@ -110,7 +124,7 @@ Item {
             resolved = Quickshell.iconPath("application-x-executable");
         }
 
-        root.iconCache[cacheKey] = resolved;
+        root.cacheIcon(cacheKey, resolved);
         return resolved;
     }
 
@@ -123,11 +137,18 @@ Item {
     }
 
     function requestOpen() {
-        if (root.open || clientsProc.running) {
+        if (root.open) {
             hideTimer.stop();
             return;
         }
         hideTimer.stop();
+        if (clientsProc.running) {
+            // Supersede an in-flight collection: terminate, reap, then restart
+            root._clientsPending = true;
+            clientsProc.running = false;
+            return;
+        }
+        clientsTimeout.restart();
         clientsProc.running = true;
     }
 
@@ -243,33 +264,83 @@ Item {
         }
     }
 
+    // Security and DoS ceilings for compositor- and client-derived data
+    readonly property int maxClientsBytes: 1048576 // 1 MiB hard stream buffer ceiling
+    property string _clientsBuffer: ""
+    property bool _clientsPending: false
+
+    // Parse a bounded clients payload and open the switcher
+    function collectClients(raw) {
+        let clients = [];
+        try { clients = JSON.parse(String(raw || "").trim()); } catch (e) {
+            return;
+        }
+        if (!Array.isArray(clients)) return;
+        const activeWs = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1;
+        const groups = Logic.groupClients(clients, activeWs);
+        const flat = Logic.flatten(groups);
+        if (!flat.length) {
+            root.open = false;
+            root.openedViaKeyboard = false;
+            return;
+        }
+        root.groups = groups;
+        root.flat = flat;
+        if (root.openedViaKeyboard) {
+            root.selected = Logic.initialSelection(flat);
+        } else if (root.selected >= flat.length) {
+            root.selected = 0;
+        }
+        root.open = true;
+    }
+
+    // Bounded clients collection: OS timeout + OS byte cap + incremental
+    // stream bounding, with terminate/reap on timeout, supersession, and
+    // component destruction.
     Process {
         id: clientsProc
-        command: ["hyprctl", "-j", "clients"]
-        stdout: StdioCollector {
-            onStreamFinished: {
-                let clients = [];
-                try { clients = JSON.parse(text); } catch (e) {
-                    return;
+        command: ["/bin/sh", "-c", "exec timeout 5 hyprctl -j clients 2>/dev/null | head -c 1048576"]
+        stdout: SplitParser {
+            onRead: function(line) {
+                if (root._clientsBuffer.length < root.maxClientsBytes) {
+                    const remaining = root.maxClientsBytes - root._clientsBuffer.length;
+                    root._clientsBuffer += (String(line || "") + "\n").slice(0, remaining);
+                } else if (clientsProc.running) {
+                    clientsProc.running = false;
                 }
-                const activeWs = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1;
-                const groups = Logic.groupClients(clients, activeWs);
-                const flat = Logic.flatten(groups);
-                if (!flat.length) {
-                    root.open = false;
-                    root.openedViaKeyboard = false;
-                    return;
-                }
-                root.groups = groups;
-                root.flat = flat;
-                if (root.openedViaKeyboard) {
-                    root.selected = Logic.initialSelection(flat);
-                } else if (root.selected >= flat.length) {
-                    root.selected = 0;
-                }
-                root.open = true;
             }
         }
+        onStarted: {
+            root._clientsBuffer = "";
+        }
+        onExited: {
+            clientsTimeout.stop();
+            root.collectClients(root._clientsBuffer);
+            root._clientsBuffer = "";
+            if (root._clientsPending) {
+                root._clientsPending = false;
+                clientsTimeout.restart();
+                clientsProc.running = true;
+            }
+        }
+    }
+
+    // QML-side backup reaper in case the producer-side timeout is insufficient
+    Timer {
+        id: clientsTimeout
+        interval: 6000
+        repeat: false
+        onTriggered: {
+            if (clientsProc.running) clientsProc.running = false;
+        }
+    }
+
+    // Reap running processes when the service is destroyed
+    Component.onDestruction: {
+        clientsTimeout.stop();
+        root._clientsPending = false;
+        if (clientsProc.running) clientsProc.running = false;
+        if (modCheck.running) modCheck.running = false;
     }
 
     PanelWindow {
@@ -388,6 +459,7 @@ Item {
                                     Text {
                                         anchors.horizontalCenter: parent.horizontalCenter
                                         text: modelData.name || ""
+                                        textFormat: Text.PlainText
                                         color: Qt.alpha(Color.foreground, 0.5)
                                         font.family: Style.font.family
                                         font.pixelSize: Style.font.caption
@@ -459,6 +531,7 @@ Item {
                         height: Style.space(24)
                         font.family: Style.font.family
                         font.pixelSize: Style.font.body
+                        textFormat: Text.PlainText
                         text: (root.flat.length > 0 && root.selected < root.flat.length)
                             ? (root.flat[root.selected].title && root.flat[root.selected].title !== "-" ? root.flat[root.selected].title : root.flat[root.selected].cls)
                             : ""
