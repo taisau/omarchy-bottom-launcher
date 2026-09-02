@@ -143,12 +143,13 @@ Item {
         }
         hideTimer.stop();
         if (clientsProc.running) {
-            // Supersede an in-flight collection: terminate, reap, then restart
+            // Supersede an in-flight collection: reap the whole process
+            // group (TERM -> KILL), then restart once it has exited.
             root._clientsPending = true;
-            clientsProc.running = false;
+            root.reapProcessGroup(clientsProc);
             return;
         }
-        clientsTimeout.restart();
+        clientsDeadline.restart();
         clientsProc.running = true;
     }
 
@@ -223,6 +224,62 @@ Item {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Bounded process supervision
+    //
+    // Both external producers (modifier probe and client list) are launched
+    // under /usr/bin/setsid, so each tracked child becomes the leader of an
+    // isolated process group (PGID == processId). Every binary is referenced
+    // by fixed absolute path (no PATH lookup) and there is no shell pipeline:
+    // each producer is a two-layer tree (timeout -> hyprctl) whose coreutils
+    // timeout enforces the OS-level deadline with TERM -> KILL escalation
+    // (-k). The shared supervisor below reaps the FULL process group
+    // (TERM, short grace, then KILL) on deadline, output overflow,
+    // supersession, and component destruction.
+    // ------------------------------------------------------------------
+    readonly property string exeSh: "/bin/sh"
+    readonly property string exeSetsid: "/usr/bin/setsid"
+    readonly property string exeTimeout: "/usr/bin/timeout"
+    readonly property string exeHyprctl: "/usr/bin/hyprctl"
+    readonly property int clientsDeadlineSec: 5
+    readonly property int modCheckDeadlineSec: 2
+
+    // Process-group leader id of a running producer (0 when not running)
+    function groupLeaderId(proc) {
+        const pid = proc.processId;
+        return (typeof pid === "number" && pid > 0) ? Math.floor(pid) : 0;
+    }
+
+    // The one bounded supervisor: TERM -> KILL the whole process group
+    function reapProcessGroup(proc) {
+        const pgid = root.groupLeaderId(proc);
+        proc.running = false;
+        if (pgid <= 0) return;
+        if (groupReaper.running) {
+            // Reaps are short (~0.3 s); queue overlapping requests.
+            if (root._reapQueue.length < 4) root._reapQueue.push(pgid);
+        } else {
+            root.startGroupReap(pgid);
+        }
+    }
+
+    function startGroupReap(pgid) {
+        groupReaper.command = [
+            root.exeTimeout, "-k", "1", "2", root.exeSh, "-c",
+            "kill -TERM -- -" + pgid + " 2>/dev/null; /bin/sleep 0.3; kill -KILL -- -" + pgid + " 2>/dev/null"
+        ];
+        groupReaper.running = true;
+    }
+
+    // Self-bounded, silent reaper (its own timeout -k backstop)
+    Process {
+        id: groupReaper
+        running: false
+        onExited: {
+            if (root._reapQueue.length > 0) root.startGroupReap(root._reapQueue.shift());
+        }
+    }
+
     // Active modifier polling to detect when Alt/Super is released
     Timer {
         id: modCheckTimer
@@ -230,27 +287,65 @@ Item {
         repeat: true
         running: root.open && root.openedViaKeyboard
         onTriggered: {
-            modCheck.running = true;
+            if (!modCheck.running) modCheck.running = true; // supersession guard
         }
     }
 
+    // Modifier probe: setsid'd fixed tree (timeout -> hyprctl), absolutely
+    // referenced, output-bounded sink, group-reaped on overflow, deadline,
+    // and destruction. No unbounded StdioCollector.
     Process {
         id: modCheck
-        command: ["hyprctl", "eval",
-            'error(tostring(hl.is_key_down("Alt_L") or hl.is_key_down("Alt_R") or hl.is_key_down("Super_L") or hl.is_key_down("Super_R")))']
-        stdout: StdioCollector {
-            onStreamFinished: {
-                if (!root.open || !root.openedViaKeyboard) return;
-                if (!text.trim().endsWith("true")) {
-                    if (root.flat.length > 0 && root.selected < root.flat.length) {
-                        const target = root.flat[root.selected];
-                        root.focusWindow(target.addr, target.groupIdx);
-                    } else {
-                        root.open = false;
-                        root.openedViaKeyboard = false;
-                    }
+        command: [
+            root.exeSetsid, root.exeTimeout, "-k", "1", String(root.modCheckDeadlineSec),
+            root.exeHyprctl, "eval",
+            'error(tostring(hl.is_key_down("Alt_L") or hl.is_key_down("Alt_R") or hl.is_key_down("Super_L") or hl.is_key_down("Super_R")))'
+        ]
+        stdout: SplitParser {
+            onRead: function(line) {
+                if (root._modBuffer.length < root.modMaxBytes) {
+                    const remaining = root.modMaxBytes - root._modBuffer.length;
+                    root._modBuffer += (String(line || "") + "\n").slice(0, remaining);
+                } else if (modCheck.running) {
+                    root._modOverflow = true;
+                    root.reapProcessGroup(modCheck); // output ceiling
                 }
             }
+        }
+        onStarted: {
+            root._modBuffer = "";
+            root._modOverflow = false;
+            modCheckDeadline.restart();
+        }
+        onExited: {
+            modCheckDeadline.stop();
+            const out = root._modBuffer;
+            const overflowed = root._modOverflow;
+            root._modBuffer = "";
+            root._modOverflow = false;
+            if (overflowed) return;
+            if (!root.open || !root.openedViaKeyboard) return;
+            if (!out.trim().endsWith("true")) {
+                if (root.flat.length > 0 && root.selected < root.flat.length) {
+                    const target = root.flat[root.selected];
+                    root.focusWindow(target.addr, target.groupIdx);
+                } else {
+                    root.open = false;
+                    root.openedViaKeyboard = false;
+                }
+            }
+        }
+    }
+
+    // QML-side deadline backstop for the modifier probe (the OS-level
+    // timeout inside the producer is primary; this reaps the group if even
+    // that fails to terminate the tree)
+    Timer {
+        id: modCheckDeadline
+        interval: (root.modCheckDeadlineSec + 2) * 1000
+        repeat: false
+        onTriggered: {
+            if (modCheck.running) root.reapProcessGroup(modCheck);
         }
     }
 
@@ -266,8 +361,13 @@ Item {
 
     // Security and DoS ceilings for compositor- and client-derived data
     readonly property int maxClientsBytes: 1048576 // 1 MiB hard stream buffer ceiling
+    readonly property int modMaxBytes: 64 // modifier probe emits "true"/"false"
     property string _clientsBuffer: ""
+    property bool _clientsOverflow: false
     property bool _clientsPending: false
+    property string _modBuffer: ""
+    property bool _modOverflow: false
+    property var _reapQueue: []
 
     // Parse a bounded clients payload and open the switcher
     function collectClients(raw) {
@@ -294,53 +394,66 @@ Item {
         root.open = true;
     }
 
-    // Bounded clients collection: OS timeout + OS byte cap + incremental
-    // stream bounding, with terminate/reap on timeout, supersession, and
-    // component destruction.
+    // Bounded client list: setsid'd fixed tree (timeout -> hyprctl), no
+    // shell pipeline, byte-capped QML sink, group-reaped on overflow,
+    // deadline, supersession, and destruction.
     Process {
         id: clientsProc
-        command: ["/bin/sh", "-c", "exec timeout 5 hyprctl -j clients 2>/dev/null | head -c 1048576"]
+        command: [
+            root.exeSetsid, root.exeTimeout, "-k", "1", String(root.clientsDeadlineSec),
+            root.exeHyprctl, "-j", "clients"
+        ]
         stdout: SplitParser {
             onRead: function(line) {
                 if (root._clientsBuffer.length < root.maxClientsBytes) {
                     const remaining = root.maxClientsBytes - root._clientsBuffer.length;
                     root._clientsBuffer += (String(line || "") + "\n").slice(0, remaining);
                 } else if (clientsProc.running) {
-                    clientsProc.running = false;
+                    root._clientsOverflow = true;
+                    root.reapProcessGroup(clientsProc); // output ceiling
                 }
             }
         }
         onStarted: {
             root._clientsBuffer = "";
+            root._clientsOverflow = false;
         }
         onExited: {
-            clientsTimeout.stop();
-            root.collectClients(root._clientsBuffer);
+            clientsDeadline.stop();
+            const out = root._clientsBuffer;
+            const overflowed = root._clientsOverflow;
             root._clientsBuffer = "";
+            root._clientsOverflow = false;
+            if (!overflowed) root.collectClients(out);
             if (root._clientsPending) {
                 root._clientsPending = false;
-                clientsTimeout.restart();
+                clientsDeadline.restart();
                 clientsProc.running = true;
             }
         }
     }
 
-    // QML-side backup reaper in case the producer-side timeout is insufficient
+    // QML-side deadline backstop for the client list producer
     Timer {
-        id: clientsTimeout
-        interval: 6000
+        id: clientsDeadline
+        interval: (root.clientsDeadlineSec + 2) * 1000
         repeat: false
         onTriggered: {
-            if (clientsProc.running) clientsProc.running = false;
+            if (clientsProc.running) root.reapProcessGroup(clientsProc);
         }
     }
 
-    // Reap running processes when the service is destroyed
+    // Reap both producer process groups (TERM -> KILL) when the service is
+    // destroyed. Additional backstops: Quickshell SIGTERMs direct children
+    // on teardown, and each producer's own OS timeout (-k) escalates to
+    // KILL even if this reaper cannot complete during destruction.
     Component.onDestruction: {
-        clientsTimeout.stop();
+        clientsDeadline.stop();
+        modCheckDeadline.stop();
         root._clientsPending = false;
-        if (clientsProc.running) clientsProc.running = false;
-        if (modCheck.running) modCheck.running = false;
+        root._reapQueue = [];
+        root.reapProcessGroup(clientsProc);
+        root.reapProcessGroup(modCheck);
     }
 
     PanelWindow {
