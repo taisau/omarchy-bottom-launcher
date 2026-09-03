@@ -29,19 +29,52 @@ Item {
     // Multi-colour variants for org.omarchy.agent (Buuf robot)
     readonly property int agentVariantCount: 8
 
-    function agentIconUrlFor(addr) {
-        let h = 0;
-        const s = String(addr || "");
-        for (let i = 0; i < s.length; i++) h = ((h * 31 + s.charCodeAt(i)) >>> 0);
-        return Qt.resolvedUrl("assets/omarchy-agent-" + (h % agentVariantCount) + ".png");
+    // High-contrast palette order over the 8 variants. Linear hue indices
+    // cluster the three green-family variants (5 olive, 6 forest, 7 teal)
+    // adjacently; this order maximizes hue separation between consecutive
+    // ranks: blue, crimson, forest, purple, orange, magenta, teal, olive.
+    readonly property var agentPalette: [0, 3, 6, 1, 4, 2, 7, 5]
+
+    // Agent family of a window: "opencode", "hermes", or "" (not an agent).
+    // Must mirror the branch order of iconPathFor().
+    function agentFamily(cls, title) {
+        const c = String(cls || "").toLowerCase();
+        if (c === "org.omarchy.agent.hermes") return "hermes";
+        if (c === "org.omarchy.agent") return "opencode";
+        if (String(title || "").toLowerCase().includes("hermes")) return "hermes";
+        return "";
     }
 
-    // Hermes agent (Nous Research) multi-colour variants based on window address
-    function hermesIconUrlFor(addr) {
-        let h = 0;
-        const s = String(addr || "");
-        for (let i = 0; i < s.length; i++) h = ((h * 31 + s.charCodeAt(i)) >>> 0);
-        return Qt.resolvedUrl("assets/omarchy-agent-hermes-" + (h % agentVariantCount) + ".png");
+    // Collision-free variant selection. Instead of hashing each window's
+    // address in isolation (31 ≡ -1 mod 8 collapses the hash to an
+    // alternating ASCII sum, which clusters on Hyprland's uniform heap
+    // addresses), rank the window among all currently listed windows of the
+    // same family by address and walk the high-contrast palette. Ranks are
+    // distinct per open window, so with <= 8 agent windows every colour is
+    // unique. Sorting by address (stable for a window's lifetime) keeps
+    // colours put across focus changes and re-collections. Beyond 8 windows
+    // the palette wraps.
+    function agentVariantIndex(cls, title, addr) {
+        const family = agentFamily(cls, title);
+        if (!family) return 0;
+        const peers = [];
+        for (const e of root.flat) {
+            if (e.addr && agentFamily(e.cls, e.title) === family) peers.push(e.addr);
+        }
+        peers.sort();
+        let rank = peers.indexOf(String(addr || ""));
+        if (rank < 0) rank = 0;
+        return root.agentPalette[rank % root.agentPalette.length];
+    }
+
+    function agentIconUrlFor(cls, title, addr) {
+        return Qt.resolvedUrl("assets/omarchy-agent-" + agentVariantIndex(cls, title, addr) + ".png");
+    }
+
+    // Hermes agent (Nous Research) variants share the same collision-free
+    // ranking, scoped to hermes-family windows.
+    function hermesIconUrlFor(cls, title, addr) {
+        return Qt.resolvedUrl("assets/omarchy-agent-hermes-" + agentVariantIndex(cls, title, addr) + ".png");
     }
 
     // Bounded cache write with FIFO eviction (keys are class::title pairs;
@@ -59,15 +92,15 @@ Item {
     function iconPathFor(cls, title, addr) {
         if (!cls) return Quickshell.iconPath("application-x-executable");
         if (cls.toLowerCase() === "org.omarchy.agent.hermes") {
-            return hermesIconUrlFor(addr);
+            return hermesIconUrlFor(cls, title, addr);
         }
         if (cls.toLowerCase() === "org.omarchy.agent") {
-            return agentIconUrlFor(addr);
+            return agentIconUrlFor(cls, title, addr);
         }
 
         const titleLower = (title || "").toLowerCase();
         if (titleLower.includes("hermes")) {
-            return hermesIconUrlFor(addr);
+            return hermesIconUrlFor(cls, title, addr);
         }
 
         const cacheKey = cls + "::" + (title || "");
@@ -164,6 +197,9 @@ Item {
         root.open = false;
         root.openedViaKeyboard = false;
         if (!addr) return;
+        // Statement-of-intent hardening (upstream review suggestion): only
+        // dispatch well-formed Hyprland addresses into Lua.
+        if (!/^0x[0-9a-fA-F]+$/.test(addr)) return;
         if (groupIdx > 0) {
             Hyprland.dispatch('hl.dsp.group.active({ window = "address:' + addr + '", index = ' + groupIdx + ' })');
         }
