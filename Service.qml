@@ -35,6 +35,23 @@ Item {
     // ranks: blue, crimson, forest, purple, orange, magenta, teal, olive.
     readonly property var agentPalette: [0, 3, 6, 1, 4, 2, 7, 5]
 
+    // Live screen targeting. The PanelWindow below is a direct layer-shell
+    // surface (no Variants), so Quickshell would otherwise anchor it to
+    // screens[0] once at load time. When that output is later disabled
+    // (e.g. laptop lid / internal-monitor toggle), the surface strands on the
+    // dead output and the launcher vanishes until the shell restarts. Follow
+    // the Hyprland focused monitor instead, falling back to the first
+    // enumerated screen; the binding re-evaluates on focusedMonitorChanged
+    // and screen-list changes, so the surface re-homes itself live.
+    readonly property var targetScreen: {
+        var focused = Hyprland.focusedMonitor ? String(Hyprland.focusedMonitor.name) : "";
+        var screens = Quickshell.screens;
+        for (var i = 0; i < screens.length; i++) {
+            if (String(screens[i].name) === focused) return screens[i];
+        }
+        return screens.length > 0 ? screens[0] : null;
+    }
+
     // Agent family of a window: "opencode", "hermes", or "" (not an agent).
     // Must mirror the branch order of iconPathFor().
     function agentFamily(cls, title) {
@@ -511,6 +528,9 @@ Item {
     PanelWindow {
         id: panelWindow
         visible: true
+
+        // Re-home the layer surface when monitors change (see targetScreen).
+        screen: root.targetScreen
 
         WlrLayershell.namespace: "omarchy-bottom-launcher"
         WlrLayershell.layer: WlrLayer.Overlay

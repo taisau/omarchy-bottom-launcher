@@ -7,7 +7,7 @@ A fast, rising window switcher and launcher plugin for Omarchy on Hyprland, buil
 ## Features
 
 - **Dual Activation Triggers**:
-  - **Mouse Hover**: Move your cursor down to the bottom-middle third of the primary monitor to reveal the floating launcher.
+  - **Mouse Hover**: Move your cursor down to the bottom-middle third of the focused monitor to reveal the floating launcher.
   - **Keyboard Shortcut**: Native `Alt+Tab` / `Alt+Shift+Tab` integration with MRU (most-recently-used) window cycling.
 - **Instant Window Switching**:
   - Releasing `Alt` automatically raises and focuses the highlighted window.
@@ -15,7 +15,7 @@ A fast, rising window switcher and launcher plugin for Omarchy on Hyprland, buil
 - **Workspace-Grouped Overview**: Active windows are neatly organized by workspace, with clean window titles and application icons.
 - **Dynamic Theming**: Automatically adapts to Omarchy's color palette, typography, and square window styling.
 - **Pass-Through Passivity**: 100% transparent and click-through when idle; only the subtle bottom trigger zone captures mouse entry.
-- **Multi-Monitor Aware**: Confined cleanly to the primary display.
+- **Multi-Monitor Aware**: Follows the Hyprland focused monitor, so it never strands on a disabled output (e.g. laptop lid / internal-monitor toggles).
 
 ## Installation
 
