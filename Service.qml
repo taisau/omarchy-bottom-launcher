@@ -52,6 +52,54 @@ Item {
         return screens.length > 0 ? screens[0] : null;
     }
 
+    // Self-heal for host-output unplug. When the output physically hosting
+    // the layer surface is disconnected, the compositor destroys the surface
+    // outright and the targetScreen binding's single re-evaluation can race
+    // the screens-list update, leaving the launcher dead until a shell
+    // restart. After every monitor topology change, re-assert the screen;
+    // if re-assignment alone does not remap, toggle visibility to force the
+    // layer surface to be recreated.
+    property int healAttempts: 0
+    function healScreen() {
+        var t = root.targetScreen;
+        if (panelWindow.screen !== t) {
+            panelWindow.screen = t;
+            if (t && panelWindow.screen !== t) {
+                panelWindow.visible = false;
+                panelWindow.visible = true;
+            }
+        }
+    }
+    Timer {
+        id: screenHealTimer
+        interval: 300
+        onTriggered: {
+            root.healScreen();
+            if (panelWindow.screen !== root.targetScreen && root.healAttempts < 3) {
+                root.healAttempts += 1;
+                restart();
+            } else if (panelWindow.screen === root.targetScreen) {
+                root.healAttempts = 0;
+            }
+        }
+    }
+    Connections {
+        target: Hyprland
+        function onRawEvent(ev) {
+            if (ev.name === "monitorremoved" || ev.name === "monitoradded" || ev.name === "focusedmon") {
+                root.healAttempts = 0;
+                screenHealTimer.restart();
+            }
+        }
+    }
+    Connections {
+        target: Quickshell
+        function onScreensChanged() {
+            root.healAttempts = 0;
+            screenHealTimer.restart();
+        }
+    }
+
     // Agent family of a window: "opencode", "hermes", or "" (not an agent).
     // Must mirror the branch order of iconPathFor().
     function agentFamily(cls, title) {
