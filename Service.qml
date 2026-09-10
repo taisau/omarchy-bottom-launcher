@@ -167,6 +167,12 @@ Item {
         if (titleLower.includes("hermes")) {
             return hermesIconUrlFor(cls, title, addr);
         }
+        // Omamail windows carry the shared org.quickshell class, so the title
+        // is the discriminator. The Buuf mailbox replaces the plugin's SVG
+        // that the desktop-entry cascade would otherwise resolve.
+        if (titleLower.includes("omamail")) {
+            return Qt.resolvedUrl("assets/omamail.png");
+        }
 
         const cacheKey = cls + "::" + (title || "");
         if (root.iconCache[cacheKey]) {
