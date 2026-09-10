@@ -494,8 +494,7 @@ Item {
             return;
         }
         if (!Array.isArray(clients)) return;
-        const activeWs = Hyprland.focusedWorkspace ? Hyprland.focusedWorkspace.id : -1;
-        const groups = Logic.groupClients(clients, activeWs);
+        const groups = Logic.groupClients(clients);
         const flat = Logic.flatten(groups);
         if (!flat.length) {
             root.open = false;

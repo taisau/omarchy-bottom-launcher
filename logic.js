@@ -31,12 +31,13 @@ function cleanTitle(title, cls) {
     return t.trim() || capStr(cls || "", MAX_NAME);
 }
 
-// Group clients by workspace: active workspace first then ascending id;
+// Group clients by workspace in ascending id order (1, 2, 3, …) regardless
+// of which workspace is active;
 // within a group the focused window (fhid == 0) first, then ascending fhid.
 // Pinned windows excluded, empty titles replaced with "-".
 // groupIdx: 1-based position in the client's Hyprland group, 0 if ungrouped.
 // Returns [{ name, entries: [{ cls, title, addr, hidden, fhid, flatIdx, groupIdx }] }].
-function groupClients(clients, activeWsId) {
+function groupClients(clients) {
     if (!Array.isArray(clients)) return [];
     if (clients.length > MAX_CLIENTS) clients = clients.slice(0, MAX_CLIENTS);
 
@@ -54,11 +55,7 @@ function groupClients(clients, activeWsId) {
         wsMap[wsId].clients.push(c);
     }
 
-    wsOrder.sort((a, b) => {
-        const pa = a === activeWsId ? 0 : 1;
-        const pb = b === activeWsId ? 0 : 1;
-        return pa !== pb ? pa - pb : a - b;
-    });
+    wsOrder.sort((a, b) => a - b);
 
     let flatIdx = 0;
     const groups = [];
