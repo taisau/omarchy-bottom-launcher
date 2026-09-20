@@ -61,4 +61,4 @@ omarchy restart shell
 ```
 
 ## License
-MIT © [John Boyd](https://github.com/taisau)
+MIT © [taisau](https://github.com/taisau)

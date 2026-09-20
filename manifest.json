@@ -3,7 +3,7 @@
   "id": "io.github.taisau.bottom-launcher",
   "name": "Bottom Launcher",
   "version": "1.3.2",
-  "author": "John Boyd",
+  "author": "taisau",
   "license": "MIT",
   "description": "Mouse-activated and Alt+Tab rising window switcher and launcher for Omarchy on Hyprland",
   "kinds": [
