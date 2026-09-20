@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.taisau.bottom-launcher",
   "name": "Bottom Launcher",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "author": "taisau",
   "license": "MIT",
   "description": "Mouse-activated and Alt+Tab rising window switcher and launcher for Omarchy on Hyprland",
