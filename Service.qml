@@ -19,6 +19,9 @@ Item {
     property var groups: []
     property var flat: []
     property int selected: 0
+    // Address of the tile whose right-click kill menu is showing ("" = none).
+    property string menuAddr: ""
+    onOpenChanged: if (!open) menuAddr = ""
 
     // In-memory icon path cache for instant O(1) lookups.
     // Bounded: a stream of uniquely titled windows must not grow shared-shell
@@ -263,7 +266,20 @@ Item {
         }
     }
 
+    // Signal a single window's process by PID (never by name, so other
+    // windows of the same app survive). Signal is fixed to TERM or KILL.
+    function killWindow(pid, force) {
+        root.menuAddr = "";
+        if (!Number.isInteger(pid) || pid <= 1 || killProc.running) return;
+        killProc.command = [
+            root.exeTimeout, "-k", "1", "2",
+            "/usr/bin/kill", force ? "-KILL" : "-TERM", String(pid)
+        ];
+        killProc.running = true;
+    }
+
     function focusWindow(addr, groupIdx) {
+        root.menuAddr = "";
         hideTimer.stop();
         root.open = false;
         root.openedViaKeyboard = false;
@@ -462,6 +478,24 @@ Item {
         repeat: false
         onTriggered: {
             if (modCheck.running) root.reapProcessGroup(modCheck);
+        }
+    }
+
+    Process {
+        id: killProc
+        onExited: refreshTimer.restart()
+    }
+
+    // Re-list windows shortly after a kill so the dead tile disappears.
+    Timer {
+        id: refreshTimer
+        interval: 600
+        repeat: false
+        onTriggered: {
+            if (root.open && !clientsProc.running) {
+                clientsDeadline.restart();
+                clientsProc.running = true;
+            }
         }
     }
 
@@ -716,6 +750,7 @@ Item {
                                                 required property var modelData
 
                                                 property bool isSelected: root.selected === modelData.flatIdx
+                                                readonly property bool menuShown: root.menuAddr !== "" && root.menuAddr === modelData.addr
 
                                                 width: Style.space(72)
                                                 height: Style.space(72)
@@ -729,6 +764,7 @@ Item {
                                                 Image {
                                                     id: icon
                                                     anchors.centerIn: parent
+                                                    visible: !tile.menuShown
                                                     width: Style.space(48)
                                                     height: Style.space(48)
                                                     sourceSize.width: Style.space(48)
@@ -750,8 +786,66 @@ Item {
 
                                                 TapHandler {
                                                     acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                                    acceptedButtons: Qt.LeftButton
+                                                    enabled: !tile.menuShown
                                                     onTapped: {
                                                         root.focusWindow(tile.modelData.addr, tile.modelData.groupIdx);
+                                                    }
+                                                }
+
+                                                TapHandler {
+                                                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                                    acceptedButtons: Qt.RightButton
+                                                    onTapped: {
+                                                        hideTimer.stop();
+                                                        root.menuAddr = tile.menuShown ? "" : tile.modelData.addr;
+                                                    }
+                                                }
+
+                                                // Right-click menu: replaces the icon with two buttons.
+                                                Column {
+                                                    visible: tile.menuShown
+                                                    anchors.fill: parent
+                                                    anchors.margins: Style.space(3)
+                                                    spacing: Style.space(3)
+
+                                                    Repeater {
+                                                        model: [
+                                                            { label: "Close", force: false },
+                                                            { label: "Kill", force: true }
+                                                        ]
+
+                                                        Rectangle {
+                                                            id: killBtn
+                                                            required property var modelData
+                                                            width: parent.width
+                                                            height: (parent.height - Style.space(3)) / 2
+                                                            radius: 0
+                                                            color: btnHover.hovered
+                                                                ? Qt.alpha(modelData.force ? "#e5484d" : Color.accent, 0.55)
+                                                                : Qt.alpha(Color.foreground, 0.12)
+
+                                                            Text {
+                                                                anchors.centerIn: parent
+                                                                text: killBtn.modelData.label
+                                                                textFormat: Text.PlainText
+                                                                color: Color.foreground
+                                                                font.family: Style.font.family
+                                                                font.pixelSize: Style.font.caption
+                                                                font.bold: true
+                                                            }
+
+                                                            HoverHandler {
+                                                                id: btnHover
+                                                                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                                            }
+
+                                                            TapHandler {
+                                                                acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                                                acceptedButtons: Qt.LeftButton
+                                                                onTapped: root.killWindow(tile.modelData.pid, killBtn.modelData.force)
+                                                            }
+                                                        }
                                                     }
                                                 }
                                             }

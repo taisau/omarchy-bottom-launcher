@@ -73,6 +73,7 @@ function groupClients(clients) {
                 title: capStr(cleanTitle(c.title, c.class), MAX_TITLE),
                 rawTitle: capStr(c.title || "-", MAX_TITLE),
                 addr: capStr(String(c.address || ""), MAX_ADDR).replace(/[^0-9a-zA-Z]/g, ""),
+                pid: (Number.isInteger(c.pid) && c.pid > 1 && c.pid <= 4194304) ? c.pid : 0,
                 hidden: !!c.hidden,
                 fhid: c.focusHistoryID || 0,
                 flatIdx: flatIdx++,
