@@ -866,8 +866,8 @@ Item {
                                                 // pushpin filled with the theme accent colour.
                                                 Item {
                                                     visible: tile.modelData.pinLeft && !tile.menuShown
-                                                    anchors.top: parent.top
-                                                    anchors.left: parent.left
+                                                    anchors.bottom: parent.bottom
+                                                    anchors.right: parent.right
                                                     anchors.margins: Style.space(3)
                                                     width: Style.space(14)
                                                     height: Style.space(14)
