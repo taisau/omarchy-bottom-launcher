@@ -278,6 +278,33 @@ Item {
         killProc.running = true;
     }
 
+    // Add or remove the "pinleft" tag on one window. The Hyprland side
+    // (extras/pinleft.lua) reacts to the tag change and keeps tagged windows
+    // in the leftmost columns. Tag name and sign are fixed literals; only a
+    // well-formed address is interpolated.
+    function setPinLeft(addr, pin) {
+        root.menuAddr = "";
+        if (!/^0x[0-9a-fA-F]+$/.test(addr)) return;
+        Hyprland.dispatch('hl.dsp.window.tag({ tag = "' + (pin ? "+" : "-") + 'pinleft", window = "address:' + addr + '" })');
+        refreshTimer.restart();
+    }
+
+    // Move a window's scrolling-layout column |delta| places left (delta < 0)
+    // or right (delta > 0): focus it, then swap with the neighbour column
+    // one step at a time. Layout messages are fixed literals.
+    function moveColumn(addr, delta) {
+        root.menuAddr = "";
+        if (!/^0x[0-9a-fA-F]+$/.test(addr)) return;
+        if (!Number.isInteger(delta) || delta === 0) return;
+        const steps = Math.min(Math.abs(delta), 32);
+        const msg = delta < 0 ? "swapcol l" : "swapcol r";
+        Hyprland.dispatch('hl.dsp.focus({ window = "address:' + addr + '" })');
+        for (let i = 0; i < steps; i++) {
+            Hyprland.dispatch('hl.dsp.layout("' + msg + '")');
+        }
+        refreshTimer.restart();
+    }
+
     function focusWindow(addr, groupIdx) {
         root.menuAddr = "";
         hideTimer.stop();
@@ -743,6 +770,7 @@ Item {
                                         spacing: Style.space(6)
 
                                         Repeater {
+                                            id: tilesRepeater
                                             model: modelData.entries
 
                                             Rectangle {
@@ -751,6 +779,37 @@ Item {
 
                                                 property bool isSelected: root.selected === modelData.flatIdx
                                                 readonly property bool menuShown: root.menuAddr !== "" && root.menuAddr === modelData.addr
+                                                property real dragDx: 0
+                                                z: tileDrag.active ? 10 : 0
+                                                transform: Translate { x: tileDrag.active ? tile.dragDx : 0 }
+
+                                                // Highest column index holding a pinned window in this workspace.
+                                                function lastPinnedCol() {
+                                                    let m = -1;
+                                                    for (const e of wsRow.modelData.entries) {
+                                                        if (e.pinLeft && e.col > m) m = e.col;
+                                                    }
+                                                    return m;
+                                                }
+
+                                                // Resolve a drop to a column move. Unpinned windows stay right
+                                                // of the pinned block; pinned ones stay inside it.
+                                                function dropMove() {
+                                                    const cx = tile.x + tile.width / 2 + tile.dragDx;
+                                                    let best = -1, bestDist = Infinity;
+                                                    for (let j = 0; j < tilesRepeater.count; j++) {
+                                                        const sib = tilesRepeater.itemAt(j);
+                                                        if (!sib || sib.modelData.col < 0) continue;
+                                                        const d = Math.abs(sib.x + sib.width / 2 - cx);
+                                                        if (d < bestDist) { bestDist = d; best = sib.modelData.col; }
+                                                    }
+                                                    if (best < 0) return;
+                                                    const lastPin = tile.lastPinnedCol();
+                                                    if (tile.modelData.pinLeft) best = Math.min(best, lastPin);
+                                                    else best = Math.max(best, lastPin + 1);
+                                                    const delta = best - tile.modelData.col;
+                                                    if (delta !== 0) root.moveColumn(tile.modelData.addr, delta);
+                                                }
 
                                                 width: Style.space(72)
                                                 height: Style.space(72)
@@ -784,6 +843,36 @@ Item {
                                                     }
                                                 }
 
+                                                // Left-drag a tile sideways to move its column in Hyprland.
+                                                DragHandler {
+                                                    id: tileDrag
+                                                    acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
+                                                    acceptedButtons: Qt.LeftButton
+                                                    target: null
+                                                    yAxis.enabled: false
+                                                    enabled: !tile.menuShown && tile.modelData.col >= 0
+                                                    onTranslationChanged: tile.dragDx = translation.x
+                                                    onActiveChanged: {
+                                                        hideTimer.stop();
+                                                        if (!active) {
+                                                            tile.dropMove();
+                                                            tile.dragDx = 0;
+                                                        }
+                                                    }
+                                                }
+
+                                                // Pin marker (window carries the pinleft tag).
+                                                Rectangle {
+                                                    visible: tile.modelData.pinLeft && !tile.menuShown
+                                                    anchors.top: parent.top
+                                                    anchors.left: parent.left
+                                                    anchors.margins: Style.space(3)
+                                                    width: Style.space(8)
+                                                    height: width
+                                                    radius: 0
+                                                    color: Color.accent
+                                                }
+
                                                 TapHandler {
                                                     acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                                                     acceptedButtons: Qt.LeftButton
@@ -811,18 +900,21 @@ Item {
 
                                                     Repeater {
                                                         model: [
-                                                            { label: "Close", force: false },
-                                                            { label: "Kill", force: true }
+                                                            { label: tile.modelData.pinRule ? "Pinned" : (tile.modelData.pinLeft ? "Unpin" : "Pin"), kind: "pin" },
+                                                            { label: "Close", kind: "close" },
+                                                            { label: "Kill", kind: "kill" }
                                                         ]
 
                                                         Rectangle {
                                                             id: killBtn
                                                             required property var modelData
                                                             width: parent.width
-                                                            height: (parent.height - Style.space(3)) / 2
+                                                            height: (parent.height - 2 * Style.space(3)) / 3
+                                                            // Rule-pinned windows (e.g. Firefox) cannot be unpinned at runtime.
+                                                            opacity: (modelData.kind === "pin" && tile.modelData.pinRule) ? 0.5 : 1.0
                                                             radius: 0
                                                             color: btnHover.hovered
-                                                                ? Qt.alpha(modelData.force ? "#e5484d" : Color.accent, 0.55)
+                                                                ? Qt.alpha(modelData.kind === "kill" ? "#e5484d" : Color.accent, 0.55)
                                                                 : Qt.alpha(Color.foreground, 0.12)
 
                                                             Text {
@@ -843,7 +935,15 @@ Item {
                                                             TapHandler {
                                                                 acceptedDevices: PointerDevice.Mouse | PointerDevice.TouchPad
                                                                 acceptedButtons: Qt.LeftButton
-                                                                onTapped: root.killWindow(tile.modelData.pid, killBtn.modelData.force)
+                                                                onTapped: {
+                                                                    const k = killBtn.modelData.kind;
+                                                                    if (k === "pin") {
+                                                                        if (tile.modelData.pinRule) root.menuAddr = "";
+                                                                        else root.setPinLeft(tile.modelData.addr, !tile.modelData.pinLeft);
+                                                                    } else {
+                                                                        root.killWindow(tile.modelData.pid, k === "kill");
+                                                                    }
+                                                                }
                                                             }
                                                         }
                                                     }

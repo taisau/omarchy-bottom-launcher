@@ -12,7 +12,8 @@ A fast, rising window switcher and launcher plugin for Omarchy on Hyprland, buil
 - **Instant Window Switching**:
   - Releasing `Alt` automatically raises and focuses the highlighted window.
   - Clicking any window tile with the mouse instantly brings it forward.
-- **Workspace-Grouped Overview**: Active windows are neatly organized by workspace, with clean window titles and application icons.
+- **Workspace-Grouped Overview**: Active windows are neatly organized by workspace, with clean window titles and application icons. On Hyprland's scrolling layout, tiles follow the on-screen column order, left to right.
+- **Pin Left & Drag to Reorder** (scrolling layout): right-click a tile and choose **Pin** to keep that window in the leftmost columns; drag a tile sideways to move its column. Pinning needs the small Hyprland script in `extras/pinleft.lua` (see below).
 - **Dynamic Theming**: Automatically adapts to Omarchy's color palette, typography, and square window styling.
 - **Pass-Through Passivity**: 100% transparent and click-through when idle; only the subtle bottom trigger zone captures mouse entry.
 - **Multi-Monitor Aware**: Follows the Hyprland focused monitor, so it never strands on a disabled output (e.g. laptop lid / internal-monitor toggles).
@@ -62,3 +63,15 @@ omarchy restart shell
 
 ## License
 MIT © [taisau](https://github.com/taisau)
+
+### Optional: pin windows to the left (scrolling layout)
+
+Copy `extras/pinleft.lua` to `~/.config/hypr/pinleft.lua` and load it after your look'n'feel file in `~/.config/hypr/hyprland.lua`:
+```lua
+require("hypr.pinleft")
+```
+Windows tagged `pinleft` are then kept in the leftmost columns of their workspace. The launcher's **Pin** button adds and removes the tag. To pin an app permanently, add a rule:
+```lua
+o.window({ class = "firefox" }, { name = "firefox_pinleft", tag = "+pinleft" })
+```
+Rule-pinned windows show as **Pinned** in the menu and cannot be unpinned from the launcher.

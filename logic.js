@@ -31,12 +31,28 @@ function cleanTitle(title, cls) {
     return t.trim() || capStr(cls || "", MAX_NAME);
 }
 
+// True if the client's tags include `name`; with `ruleOnly`, only the
+// rule-applied form (Hyprland marks those with a trailing "*").
+function hasTag(c, name, ruleOnly) {
+    if (!c || !Array.isArray(c.tags)) return false;
+    const n = Math.min(c.tags.length, 64);
+    for (let i = 0; i < n; i++) {
+        const t = String(c.tags[i]);
+        if (ruleOnly ? t === name + "*" : (t === name || t === name + "*")) return true;
+    }
+    return false;
+}
+
 // Group clients by workspace in ascending id order (1, 2, 3, …) regardless
-// of which workspace is active;
-// within a group the focused window (fhid == 0) first, then ascending fhid.
-// Pinned windows excluded, empty titles replaced with "-".
+// of which workspace is active. Within a group, entries follow screen order
+// on Hyprland's scrolling layout: tiled windows by column x then y (so pinned
+// "pinleft" windows come first), floating windows last.
+// Pinned (sticky) windows excluded, empty titles replaced with "-".
 // groupIdx: 1-based position in the client's Hyprland group, 0 if ungrouped.
-// Returns [{ name, entries: [{ cls, title, addr, hidden, fhid, flatIdx, groupIdx }] }].
+// col: 0-based column index among the workspace's tiled windows, -1 if floating.
+// pinLeft: window carries the "pinleft" tag; pinRule: tag comes from a window
+// rule (trailing "*"), so it cannot be removed at runtime.
+// Returns [{ name, entries: [{ cls, title, addr, hidden, fhid, flatIdx, groupIdx, col, pinLeft, pinRule }] }].
 function groupClients(clients) {
     if (!Array.isArray(clients)) return [];
     if (clients.length > MAX_CLIENTS) clients = clients.slice(0, MAX_CLIENTS);
@@ -61,11 +77,20 @@ function groupClients(clients) {
     const groups = [];
     for (const wsId of wsOrder) {
         const ws = wsMap[wsId];
+        const pos = c => (Array.isArray(c.at) && Number.isFinite(c.at[0]) && Number.isFinite(c.at[1])) ? c.at : [0, 0];
         ws.clients.sort((a, b) => {
-            const ka = a.focusHistoryID === 0 ? -1 : (a.focusHistoryID || 0);
-            const kb = b.focusHistoryID === 0 ? -1 : (b.focusHistoryID || 0);
-            return ka - kb;
+            if (!!a.floating !== !!b.floating) return a.floating ? 1 : -1;
+            const pa = pos(a), pb = pos(b);
+            return (pa[0] - pb[0]) || (pa[1] - pb[1]);
         });
+        // Column index = rank of distinct x among tiled windows.
+        const colOf = {};
+        let nCols = 0;
+        for (const c of ws.clients) {
+            if (c.floating) continue;
+            const x = pos(c)[0];
+            if (!(x in colOf)) colOf[x] = nCols++;
+        }
         groups.push({
             name: ws.name,
             entries: ws.clients.map(c => ({
@@ -78,6 +103,9 @@ function groupClients(clients) {
                 fhid: c.focusHistoryID || 0,
                 flatIdx: flatIdx++,
                 groupIdx: (Array.isArray(c.grouped) && c.address) ? c.grouped.indexOf(c.address) + 1 : 0,
+                col: c.floating ? -1 : colOf[pos(c)[0]],
+                pinLeft: hasTag(c, "pinleft"),
+                pinRule: hasTag(c, "pinleft", true),
             })),
         });
     }
