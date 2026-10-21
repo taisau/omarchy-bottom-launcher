@@ -1,23 +1,27 @@
--- pinleft.lua: keep windows tagged "pinleft" in the leftmost columns of their
--- workspace on Hyprland's scrolling layout.
+-- pinleft.lua: hold pinned windows in their recorded column on Hyprland's
+-- scrolling layout.
 --
+-- A pin is a window tag recording the column from the nearer edge:
+--   pinl<N> = N-th column from the left, pinr<N> = N-th from the right (0-based).
+-- (legacy "pinleft" = pinl0). The bottom launcher's right-click "Pin" sets it.
 -- Install: copy to ~/.config/hypr/pinleft.lua and add `require("hypr.pinleft")`
--- to ~/.config/hypr/hyprland.lua (after the looknfeel line). Tag a window with
---   hyprctl dispatch 'hl.dsp.window.tag({ tag = "pinleft", window = "address:0x..." })'
--- (the bottom launcher's right-click "Pin" does exactly that), or tag by rule:
---   hl.window_rule({ name = "firefox_pinleft", match = { class = "firefox" }, tag = "+pinleft" })
+-- to ~/.config/hypr/hyprland.lua (after the looknfeel line). Manual tagging:
+--   hyprctl dispatch 'hl.dsp.window.tag({ tag = "+pinl0", window = "address:0x..." })'
 
-local TAG = "pinleft"
 local DEBOUNCE_MS = 120
 
-local function has_tag(w)
+-- Returns side ("l"/"r") and slot for a window's pin tag, or nil.
+local function pin_of(w)
   local t = w.tags
   if type(t) == "string" then t = { t } end
-  if type(t) ~= "table" then return false end
+  if type(t) ~= "table" then return nil end
   for _, v in pairs(t) do
-    if tostring(v):gsub("%*$", "") == TAG then return true end
+    local tag = tostring(v):gsub("%*$", "")
+    if tag == "pinleft" then return "l", 0 end
+    local side, n = tag:match("^pin([lr])(%d+)$")
+    if side then return side, tonumber(n) end
   end
-  return false
+  return nil
 end
 
 local function pos_x(w)
@@ -37,6 +41,8 @@ local function enforce()
   busy = true
   local active = hl.get_active_window()
   local active_addr = active and active.address or nil
+  -- focus dispatches warp the cursor to the window centre; remember and restore it
+  local cursor = hl.get_cursor_pos()
 
   -- Tiled, mapped windows per regular workspace.
   local by_ws = {}
@@ -55,32 +61,62 @@ local function enforce()
       local x = pos_x(w)
       local c = seen[x]
       if not c then
-        c = { x = x, pinned = nil }
+        c = { x = x, pinned = nil, first = w }
         seen[x] = c
         table.insert(cols, c)
       end
-      if has_tag(w) and not c.pinned then c.pinned = w end
+      if pin_of(w) and not c.pinned then c.pinned = w end
     end
     table.sort(cols, function(a, b) return a.x < b.x end)
 
-    -- Walk left to right; each pinned column moves left to the next free slot.
-    local slot = 0
+    -- Desired final order: pinned columns at their slots (left slots from
+    -- the left edge, right slots from the right edge, collisions bumped
+    -- inward), the rest in their current order.
+    local n = #cols
+    local pins = {}
     for i, c in ipairs(cols) do
       if c.pinned then
-        local dist = (i - 1) - slot
-        if dist > 0 then
-          hl.dispatch(hl.dsp.focus({ window = "address:" .. c.pinned.address }))
-          for _ = 1, dist do
-            hl.dispatch(hl.dsp.layout("swapcol l"))
-          end
-        end
-        slot = slot + 1
+        local side, slot = pin_of(c.pinned)
+        table.insert(pins, { col = c, side = side, slot = slot, i = i })
+      end
+    end
+    local desired, taken = {}, {}
+    local function place(p, t, step)
+      while t >= 1 and t <= n and desired[t] do t = t + step end
+      if t >= 1 and t <= n then desired[t] = p.col; taken[p.col] = true end
+    end
+    local lefts, rights = {}, {}
+    for _, p in ipairs(pins) do table.insert(p.side == "l" and lefts or rights, p) end
+    table.sort(lefts, function(a, b) return a.slot < b.slot or (a.slot == b.slot and a.i < b.i) end)
+    table.sort(rights, function(a, b) return a.slot < b.slot or (a.slot == b.slot and a.i > b.i) end)
+    for _, p in ipairs(lefts) do place(p, math.min(p.slot + 1, n), 1) end
+    for _, p in ipairs(rights) do place(p, math.max(n - p.slot, 1), -1) end
+    local rest = {}
+    for _, c in ipairs(cols) do if not taken[c] then table.insert(rest, c) end end
+    local r = 1
+    for t = 1, n do
+      if not desired[t] then desired[t] = rest[r]; r = r + 1 end
+    end
+
+    -- Selection pass: bring desired[t] to position t with swapcol steps.
+    for t = 1, n do
+      local j
+      for k = t, n do if cols[k] == desired[t] then j = k break end end
+      if j and j > t then
+        local w = desired[t].pinned or desired[t].first
+        hl.dispatch(hl.dsp.focus({ window = "address:" .. w.address }))
+        for _ = 1, j - t do hl.dispatch(hl.dsp.layout("swapcol l")) end
+        table.remove(cols, j)
+        table.insert(cols, t, desired[t])
       end
     end
   end
 
   if active_addr then
     hl.dispatch(hl.dsp.focus({ window = "address:" .. active_addr }))
+  end
+  if cursor then
+    hl.dispatch(hl.dsp.cursor.move({ x = cursor.x, y = cursor.y }))
   end
   busy = false
 end

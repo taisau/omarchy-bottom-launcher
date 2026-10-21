@@ -31,28 +31,29 @@ function cleanTitle(title, cls) {
     return t.trim() || capStr(cls || "", MAX_NAME);
 }
 
-// True if the client's tags include `name`; with `ruleOnly`, only the
-// rule-applied form (Hyprland marks those with a trailing "*").
-function hasTag(c, name, ruleOnly) {
-    if (!c || !Array.isArray(c.tags)) return false;
+// The client's pin tag, or "". Pin tags record the column the window is held
+// at: "pinl<N>" = N-th column from the left, "pinr<N>" = N-th from the right
+// (0-based). The legacy "pinleft" tag counts as "pinl0".
+function pinTag(c) {
+    if (!c || !Array.isArray(c.tags)) return "";
     const n = Math.min(c.tags.length, 64);
     for (let i = 0; i < n; i++) {
-        const t = String(c.tags[i]);
-        if (ruleOnly ? t === name + "*" : (t === name || t === name + "*")) return true;
+        const t = String(c.tags[i]).replace(/\*$/, "");
+        if (t === "pinleft" || /^pin[lr]\d{1,3}$/.test(t)) return t;
     }
-    return false;
+    return "";
 }
 
 // Group clients by workspace in ascending id order (1, 2, 3, …) regardless
 // of which workspace is active. Within a group, entries follow screen order
 // on Hyprland's scrolling layout: tiled windows by column x then y (so pinned
-// "pinleft" windows come first), floating windows last.
+// pinned windows keep their recorded column), floating windows last.
 // Pinned (sticky) windows excluded, empty titles replaced with "-".
 // groupIdx: 1-based position in the client's Hyprland group, 0 if ungrouped.
 // col: 0-based column index among the workspace's tiled windows, -1 if floating.
-// pinLeft: window carries the "pinleft" tag; pinRule: tag comes from a window
-// rule (trailing "*"), so it cannot be removed at runtime.
-// Returns [{ name, entries: [{ cls, title, addr, hidden, fhid, flatIdx, groupIdx, col, pinLeft, pinRule }] }].
+// ncols: number of tiled columns in the workspace.
+// pinTag: the window's pin tag ("" if not pinned), see pinTag().
+// Returns [{ name, entries: [{ cls, title, addr, hidden, fhid, flatIdx, groupIdx, col, ncols, pinTag }] }].
 function groupClients(clients) {
     if (!Array.isArray(clients)) return [];
     if (clients.length > MAX_CLIENTS) clients = clients.slice(0, MAX_CLIENTS);
@@ -104,8 +105,8 @@ function groupClients(clients) {
                 flatIdx: flatIdx++,
                 groupIdx: (Array.isArray(c.grouped) && c.address) ? c.grouped.indexOf(c.address) + 1 : 0,
                 col: c.floating ? -1 : colOf[pos(c)[0]],
-                pinLeft: hasTag(c, "pinleft"),
-                pinRule: hasTag(c, "pinleft", true),
+                ncols: nCols,
+                pinTag: pinTag(c),
             })),
         });
     }

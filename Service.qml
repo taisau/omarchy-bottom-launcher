@@ -279,14 +279,25 @@ Item {
         killProc.running = true;
     }
 
-    // Add or remove the "pinleft" tag on one window. The Hyprland side
-    // (extras/pinleft.lua) reacts to the tag change and keeps tagged windows
-    // in the leftmost columns. Tag name and sign are fixed literals; only a
-    // well-formed address is interpolated.
-    function setPinLeft(addr, pin) {
+    // Pin a window at its column (or unpin it). A pin is a Hyprland window tag
+    // recording the column from the nearer edge: "pinl<N>" / "pinr<N>". The
+    // Hyprland side (extras/pinleft.lua) reacts to the tag change and keeps
+    // tagged windows in those columns. Tag names are built from a fixed
+    // prefix and a bounded integer; only a well-formed address is interpolated.
+    function pinTagFor(col, ncols) {
+        if (!Number.isInteger(col) || !Number.isInteger(ncols) || col < 0 || col >= ncols || ncols > 100) return "";
+        return col < ncols / 2 ? "pinl" + col : "pinr" + (ncols - 1 - col);
+    }
+
+    function setPin(addr, oldTag, newTag) {
         root.menuAddr = "";
         if (!/^0x[0-9a-fA-F]+$/.test(addr)) return;
-        Hyprland.dispatch('hl.dsp.window.tag({ tag = "' + (pin ? "+" : "-") + 'pinleft", window = "address:' + addr + '" })');
+        if (oldTag && !/^(pinleft|pin[lr]\d{1,3})$/.test(oldTag)) return;
+        if (newTag && !/^pin[lr]\d{1,3}$/.test(newTag)) return;
+        if (oldTag && oldTag !== newTag)
+            Hyprland.dispatch('hl.dsp.window.tag({ tag = "-' + oldTag + '", window = "address:' + addr + '" })');
+        if (newTag && oldTag !== newTag)
+            Hyprland.dispatch('hl.dsp.window.tag({ tag = "+' + newTag + '", window = "address:' + addr + '" })');
         refreshTimer.restart();
     }
 
@@ -784,17 +795,8 @@ Item {
                                                 z: tileDrag.active ? 10 : 0
                                                 transform: Translate { x: tileDrag.active ? tile.dragDx : 0 }
 
-                                                // Highest column index holding a pinned window in this workspace.
-                                                function lastPinnedCol() {
-                                                    let m = -1;
-                                                    for (const e of wsRow.modelData.entries) {
-                                                        if (e.pinLeft && e.col > m) m = e.col;
-                                                    }
-                                                    return m;
-                                                }
-
-                                                // Resolve a drop to a column move. Unpinned windows stay right
-                                                // of the pinned block; pinned ones stay inside it.
+                                                // Resolve a drop to a column move. A pinned window is
+                                                // re-pinned at its new column.
                                                 function dropMove() {
                                                     const cx = tile.x + tile.width / 2 + tile.dragDx;
                                                     let best = -1, bestDist = Infinity;
@@ -805,11 +807,11 @@ Item {
                                                         if (d < bestDist) { bestDist = d; best = sib.modelData.col; }
                                                     }
                                                     if (best < 0) return;
-                                                    const lastPin = tile.lastPinnedCol();
-                                                    if (tile.modelData.pinLeft) best = Math.min(best, lastPin);
-                                                    else best = Math.max(best, lastPin + 1);
                                                     const delta = best - tile.modelData.col;
-                                                    if (delta !== 0) root.moveColumn(tile.modelData.addr, delta);
+                                                    if (delta === 0) return;
+                                                    root.moveColumn(tile.modelData.addr, delta);
+                                                    if (tile.modelData.pinTag)
+                                                        root.setPin(tile.modelData.addr, tile.modelData.pinTag, root.pinTagFor(best, tile.modelData.ncols));
                                                 }
 
                                                 width: Style.space(72)
@@ -862,10 +864,10 @@ Item {
                                                     }
                                                 }
 
-                                                // Pin marker (window carries the pinleft tag): a small vector
+                                                // Pin marker (window carries a pin tag): a small vector
                                                 // pushpin filled with the theme accent colour.
                                                 Item {
-                                                    visible: tile.modelData.pinLeft && !tile.menuShown
+                                                    visible: tile.modelData.pinTag !== "" && !tile.menuShown
                                                     anchors.bottom: parent.bottom
                                                     anchors.right: parent.right
                                                     anchors.margins: Style.space(3)
@@ -918,7 +920,7 @@ Item {
 
                                                     Repeater {
                                                         model: [
-                                                            { label: tile.modelData.pinRule ? "Pinned" : (tile.modelData.pinLeft ? "Unpin" : "Pin"), kind: "pin" },
+                                                            { label: tile.modelData.pinTag ? "Unpin" : "Pin", kind: "pin" },
                                                             { label: "Kill", kind: "kill" }
                                                         ]
 
@@ -927,8 +929,8 @@ Item {
                                                             required property var modelData
                                                             width: parent.width
                                                             height: (parent.height - Style.space(3)) / 2
-                                                            // Rule-pinned windows (e.g. Firefox) cannot be unpinned at runtime.
-                                                            opacity: (modelData.kind === "pin" && tile.modelData.pinRule) ? 0.5 : 1.0
+                                                            // Floating windows have no column to pin.
+                                                            opacity: (modelData.kind === "pin" && tile.modelData.col < 0) ? 0.5 : 1.0
                                                             radius: 0
                                                             color: btnHover.hovered
                                                                 ? Qt.alpha(modelData.kind === "kill" ? Color.urgent : Color.accent, 0.55)
@@ -955,8 +957,9 @@ Item {
                                                                 onTapped: {
                                                                     const k = killBtn.modelData.kind;
                                                                     if (k === "pin") {
-                                                                        if (tile.modelData.pinRule) root.menuAddr = "";
-                                                                        else root.setPinLeft(tile.modelData.addr, !tile.modelData.pinLeft);
+                                                                        if (tile.modelData.col < 0) root.menuAddr = "";
+                                                                        else if (tile.modelData.pinTag) root.setPin(tile.modelData.addr, tile.modelData.pinTag, "");
+                                                                        else root.setPin(tile.modelData.addr, "", root.pinTagFor(tile.modelData.col, tile.modelData.ncols));
                                                                     } else {
                                                                         root.killWindow(tile.modelData.pid, true);
                                                                     }
