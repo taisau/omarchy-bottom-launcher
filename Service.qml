@@ -901,7 +901,6 @@ Item {
                                                     Repeater {
                                                         model: [
                                                             { label: tile.modelData.pinRule ? "Pinned" : (tile.modelData.pinLeft ? "Unpin" : "Pin"), kind: "pin" },
-                                                            { label: "Close", kind: "close" },
                                                             { label: "Kill", kind: "kill" }
                                                         ]
 
@@ -909,7 +908,7 @@ Item {
                                                             id: killBtn
                                                             required property var modelData
                                                             width: parent.width
-                                                            height: (parent.height - 2 * Style.space(3)) / 3
+                                                            height: (parent.height - Style.space(3)) / 2
                                                             // Rule-pinned windows (e.g. Firefox) cannot be unpinned at runtime.
                                                             opacity: (modelData.kind === "pin" && tile.modelData.pinRule) ? 0.5 : 1.0
                                                             radius: 0
@@ -941,7 +940,7 @@ Item {
                                                                         if (tile.modelData.pinRule) root.menuAddr = "";
                                                                         else root.setPinLeft(tile.modelData.addr, !tile.modelData.pinLeft);
                                                                     } else {
-                                                                        root.killWindow(tile.modelData.pid, k === "kill");
+                                                                        root.killWindow(tile.modelData.pid, true);
                                                                     }
                                                                 }
                                                             }
