@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Layouts
+import QtQuick.Shapes
 import Quickshell
 import Quickshell.Io
 import Quickshell.Wayland
@@ -861,16 +862,33 @@ Item {
                                                     }
                                                 }
 
-                                                // Pin marker (window carries the pinleft tag).
-                                                Rectangle {
+                                                // Pin marker (window carries the pinleft tag): a small vector
+                                                // pushpin filled with the theme accent colour.
+                                                Item {
                                                     visible: tile.modelData.pinLeft && !tile.menuShown
                                                     anchors.top: parent.top
                                                     anchors.left: parent.left
                                                     anchors.margins: Style.space(3)
-                                                    width: Style.space(8)
-                                                    height: width
-                                                    radius: 0
-                                                    color: Color.accent
+                                                    width: Style.space(14)
+                                                    height: Style.space(14)
+
+                                                    Shape {
+                                                        width: 24
+                                                        height: 24
+                                                        scale: parent.width / 24
+                                                        transformOrigin: Item.TopLeft
+                                                        antialiasing: true
+                                                        layer.enabled: true
+                                                        layer.samples: 4
+
+                                                        ShapePath {
+                                                            fillColor: Color.accent
+                                                            strokeWidth: 0
+                                                            PathSvg {
+                                                                path: "M8 2 H16 V4 H15 V10 L18 13 V15 H13 V21 L12 23 L11 21 V15 H6 V13 L9 10 V4 H8 Z"
+                                                            }
+                                                        }
+                                                    }
                                                 }
 
                                                 TapHandler {
@@ -913,7 +931,7 @@ Item {
                                                             opacity: (modelData.kind === "pin" && tile.modelData.pinRule) ? 0.5 : 1.0
                                                             radius: 0
                                                             color: btnHover.hovered
-                                                                ? Qt.alpha(modelData.kind === "kill" ? "#e5484d" : Color.accent, 0.55)
+                                                                ? Qt.alpha(modelData.kind === "kill" ? Color.urgent : Color.accent, 0.55)
                                                                 : Qt.alpha(Color.foreground, 0.12)
 
                                                             Text {
